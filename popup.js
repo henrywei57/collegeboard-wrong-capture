@@ -1,4 +1,5 @@
-const FIELDS = ['folder', 'mode', 'format', 'settleMs', 'maxQuestions', 'fullPage', 'captureAll', 'scopeSelector', 'nextSelector'];
+const FIELDS = ['folder', 'mode', 'format', 'settleMs', 'maxQuestions', 'fullPage', 'captureAll',
+  'captureTarget', 'elementSelector', 'scopeSelector', 'nextSelector'];
 const logEl = document.getElementById('log');
 const startBtn = document.getElementById('start');
 const stopBtn = document.getElementById('stop');
@@ -52,6 +53,30 @@ async function toContent(tabId, msg) {
   }
 }
 
+// "Just one element" hides the full-page toggle: an element capture already
+// scrolls the element through the viewport when it is too tall to fit.
+const targetSel = document.getElementById('captureTarget');
+const elementRow = document.getElementById('elementRow');
+const fullPageRow = document.getElementById('fullPage').closest('.check');
+
+function syncTargetUI() {
+  const element = targetSel.value === 'element';
+  elementRow.hidden = !element;
+  fullPageRow.hidden = element;
+}
+targetSel.addEventListener('change', syncTargetUI);
+
+document.getElementById('pick').addEventListener('click', async () => {
+  const tab = await activeTab();
+  try {
+    await toContent(tab.id, { type: 'PICK' });
+    // The popup has to close for the page to receive the click.
+    window.close();
+  } catch (e) {
+    setLog('Could not start picking: ' + e.message);
+  }
+});
+
 startBtn.addEventListener('click', async () => {
   const tab = await activeTab();
   if (!tab || !/^https:\/\/[^/]*collegeboard\.org\//.test(tab.url || '')) {
@@ -85,6 +110,7 @@ testBtn.addEventListener('click', async () => {
   try {
     const r = await toContent(tab.id, { type: 'TEST', options: readOptions() });
     setLog([
+      'Capture area:       ' + r.area,
       'Question container: ' + r.scope,
       'Question:           ' + r.question,
       'Score icons found:  ' + r.icons,
@@ -132,8 +158,14 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 (async () => {
-  const { cbwcOptions, cbwcStatus } = await chrome.storage.local.get(['cbwcOptions', 'cbwcStatus']);
+  const { cbwcOptions, cbwcStatus, cbwcPicked } = await chrome.storage.local.get(
+    ['cbwcOptions', 'cbwcStatus', 'cbwcPicked']);
   applyOptions(cbwcOptions);
+  syncTargetUI();
+  if (cbwcPicked) {
+    await chrome.storage.local.remove('cbwcPicked');
+    setLog('Capture area set to:\n  ' + cbwcPicked + '\n\nPress Test page to check it, or Start to run.');
+  }
   const tab = await activeTab();
   let running = false;
   try {
@@ -141,6 +173,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     running = !!(pong && pong.running);
   } catch (e) { /* content script not loaded yet */ }
   setRunning(running);
-  if (cbwcStatus && cbwcStatus.log) setLog(cbwcStatus.log);
+  if (!cbwcPicked && cbwcStatus && cbwcStatus.log) setLog(cbwcStatus.log);
   refreshPermission();
 })();

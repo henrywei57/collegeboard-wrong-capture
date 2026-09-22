@@ -63,9 +63,32 @@ shown on the page (falling back to walk order if the page doesn't show one).
 | Image | PNG (lossless) or JPEG (much smaller files). |
 | Page wait | Pause after moving to a new question, so it can render before the screenshot. Raise it on a slow connection. |
 | Max questions | Safety stop. |
-| Full-page screenshot | Scrolls the question and stitches the slices into one tall image, so long passages aren't cut off. Uncheck for a single viewport shot. |
+| Screenshot area | `Whole page`, or `Just one element` to crop every screenshot to one part of the question. See below. |
+| Full-page screenshot | Scrolls the question and stitches the slices into one tall image, so long passages aren't cut off. Uncheck for a single viewport shot. (Hidden when capturing a single element, which handles its own scrolling.) |
 | Capture every question | Saves correct answers too, suffixed `-correct`. |
 | Advanced selectors | Override the question container and Next button if College Board's markup differs from what the built-in list expects. |
+
+## Capturing one element instead of the page
+
+If you only want the question itself — no site header, no navigator, no
+whitespace — set **Screenshot area** to *Just one element*, then:
+
+1. Click **Pick…**. The popup closes and the page enters picking mode.
+2. Move the mouse: the element under the cursor is outlined, with its size and
+   a preview of its selector.
+3. Click the part you want. Press **Esc** to cancel.
+4. Reopen the extension — the selector is filled in. **Test page** reports the
+   pixel size it would capture.
+
+The same selector is reused for every question, so pick something structural
+(the question panel) rather than a one-off. The generated selector prefers
+`data-test` attributes and stable class names, and skips framework-generated
+ones like `css-1a2b3c` that change between page loads. You can always edit it by
+hand, or type one in directly without using the picker.
+
+An element taller than the window is captured in bands and stacked, so nothing
+is cut off. If the selector doesn't match on some question, that one falls back
+to a full-page screenshot and the log says so.
 
 ## Things worth knowing
 

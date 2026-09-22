@@ -77,6 +77,20 @@
     </div>
   </div>
 
+  <label for="captureTarget">Screenshot area</label>
+  <select id="captureTarget">
+    <option value="page">Whole page</option>
+    <option value="element">Just one element</option>
+  </select>
+
+  <div id="elementRow">
+    <label for="elementSelector">Element selector</label>
+    <div class="row">
+      <input id="elementSelector" type="text" placeholder="click Pick, or type a CSS selector">
+      <button id="pick" style="flex:0 0 auto">Pick…</button>
+    </div>
+  </div>
+
   <div class="check"><input id="fullPage" type="checkbox" checked><label for="fullPage" style="margin:0">Full-page screenshot (scroll &amp; stitch)</label></div>
   <div class="check"><input id="captureAll" type="checkbox"><label for="captureAll" style="margin:0">Capture every question, not just wrong ones</label></div>
 

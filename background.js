@@ -36,20 +36,41 @@ async function saveShot({ segments, dpr, filename, format, quality }) {
   const parts = [];
   for (const seg of segments) {
     const blob = await (await fetch(seg.dataUrl)).blob();
-    parts.push({ bitmap: await createImageBitmap(blob), y: Math.round(seg.y * dpr) });
+    parts.push({ bitmap: await createImageBitmap(blob), y: Math.round((seg.y || 0) * dpr), crop: seg.crop });
   }
 
-  const width = parts[0].bitmap.width;
-  const last = parts[parts.length - 1];
-  let height = last.y + last.bitmap.height;
+  // Element captures arrive as crop rectangles stacked in order; page captures
+  // arrive as full viewports placed at their scroll offset.
+  const cropped = parts.some((p) => p.crop);
+  let width;
+  let height;
+  if (cropped) {
+    width = Math.max(...parts.map((p) => Math.round(p.crop.w * dpr)));
+    height = parts.reduce((sum, p) => sum + Math.round(p.crop.h * dpr), 0);
+  } else {
+    width = parts[0].bitmap.width;
+    const last = parts[parts.length - 1];
+    height = last.y + last.bitmap.height;
+  }
   if (height > MAX_CANVAS_PX) height = MAX_CANVAS_PX;
+  if (!width || !height) throw new Error('nothing visible to capture');
 
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
+
+  let cursor = 0;
   for (const part of parts) {
-    ctx.drawImage(part.bitmap, 0, part.y);
+    if (part.crop) {
+      const sw = Math.round(part.crop.w * dpr);
+      const sh = Math.round(part.crop.h * dpr);
+      ctx.drawImage(part.bitmap, Math.round(part.crop.x * dpr), Math.round(part.crop.y * dpr), sw, sh,
+        0, cursor, sw, sh);
+      cursor += sh;
+    } else {
+      ctx.drawImage(part.bitmap, 0, part.y);
+    }
     part.bitmap.close();
   }
 

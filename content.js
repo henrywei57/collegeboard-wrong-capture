@@ -15,6 +15,8 @@
     captureGapMs: 700,       // captureVisibleTab is rate limited (~2/sec)
     maxQuestions: 250,
     captureAll: false,       // true = save every question, not just wrong ones
+    captureTarget: 'page',   // page | element
+    elementSelector: '',     // used when captureTarget === 'element'
     nextSelector: '',
     scopeSelector: ''
   };
@@ -95,11 +97,16 @@
       const el = document.querySelector(opts.scopeSelector);
       if (el) return el;
     }
+    let fallback = null;
     for (const sel of SCOPE_CANDIDATES) {
       const el = document.querySelector(sel);
-      if (el && el.innerText && el.innerText.trim().length > 40) return el;
+      if (!el || !el.innerText || el.innerText.trim().length <= 40) continue;
+      if (!fallback) fallback = el;
+      // A container too narrow to hold the score badge can't tell us the
+      // verdict, so keep looking for one that does.
+      if (performanceIcons(el).length) return el;
     }
-    return document.body;
+    return fallback || document.body;
   }
 
   // ---------- right / wrong ----------
@@ -293,8 +300,204 @@
     return { segments: segments, dpr: dpr };
   }
 
+  // The slice of the tab viewport that actually shows the scroll container.
+  function visibleBand(scroller) {
+    if (scroller.isWindow) return { top: 0, bottom: window.innerHeight };
+    const r = scroller.el.getBoundingClientRect();
+    return { top: Math.max(0, r.top), bottom: Math.min(window.innerHeight, r.bottom) };
+  }
+
+  // Screenshot one element rather than the page: scroll it to the top of the
+  // visible area, capture, and send a crop rectangle along with each slice so
+  // the background only keeps the element's own pixels. An element taller than
+  // the viewport is walked down in bands and stacked.
+  async function captureElement(opts, el) {
+    const scroller = findScroller();
+    const dpr = window.devicePixelRatio || 1;
+    const startAt = getScroll(scroller);
+    const segments = [];
+    let hidden = [];
+
+    if (opts.hideFixed) {
+      hidden = stickyElements(el).map((node) => ({ el: node, prev: node.style.visibility }));
+      hidden.forEach((h) => { h.el.style.visibility = 'hidden'; });
+    }
+
+    try {
+      el.scrollIntoView({ block: 'start' });
+      await sleep(280);
+
+      const totalHeight = el.getBoundingClientRect().height;
+      let captured = 0;
+
+      for (let i = 0; i < 40; i++) {
+        const band = visibleBand(scroller);
+        const before = el.getBoundingClientRect();
+        const delta = (before.top + captured) - band.top;
+        if (Math.abs(delta) > 1) {
+          setScroll(scroller, getScroll(scroller) + delta);
+          await sleep(260);
+        }
+
+        const rect = el.getBoundingClientRect();
+        const now = visibleBand(scroller);
+        // Start below anything already captured, so a page that cannot scroll
+        // any further doesn't repeat rows into the next slice.
+        const top = Math.max(rect.top + captured, now.top, 0);
+        const bottom = Math.min(rect.bottom, now.bottom, window.innerHeight);
+        const left = Math.max(rect.left, 0);
+        const right = Math.min(rect.right, window.innerWidth);
+        const h = bottom - top;
+        const w = right - left;
+        if (h < 2 || w < 2) break;
+
+        segments.push({
+          dataUrl: await captureOnce(),
+          crop: { x: left, y: top, w: w, h: h }
+        });
+        captured += h;
+        if (captured >= totalHeight - 2) break;
+        await sleep(opts.captureGapMs);
+      }
+    } finally {
+      hidden.forEach((h) => { h.el.style.visibility = h.prev; });
+      setScroll(scroller, startAt);
+    }
+
+    return { segments: segments, dpr: dpr };
+  }
+
   function sanitize(s) {
     return String(s).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 60);
+  }
+
+  // ---------- picking an element ----------
+
+  const esc = (s) => (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&');
+
+  // Framework-generated names (css-1x2y3z, sc-AbCdEf, hashes) change between
+  // page loads, so they make a useless selector.
+  function stableName(name) {
+    if (!name || name.length > 40) return false;
+    if (/^(css|sc|jsx|emotion)-/i.test(name)) return false;
+    if (/\d{3,}/.test(name)) return false;
+    if (/^[a-f0-9]{8,}$/i.test(name)) return false;
+    return /^[A-Za-z][\w-]*$/.test(name);
+  }
+
+  function partFor(node) {
+    let sel = node.tagName.toLowerCase();
+    const attrs = Array.from(node.attributes || []);
+    const test = attrs.find((a) => a.name.indexOf('data-test') === 0);
+    if (test) {
+      return sel + '[' + test.name + (test.value ? '=' + JSON.stringify(test.value) : '') + ']';
+    }
+    const cls = Array.from(node.classList || []).filter(stableName)[0];
+    if (cls) sel += '.' + esc(cls);
+    return sel;
+  }
+
+  // Walk up until the selector matches exactly one element on the page.
+  function uniqueSelector(el) {
+    if (el.id && stableName(el.id)) {
+      const byId = '#' + esc(el.id);
+      if (document.querySelectorAll(byId).length === 1) return byId;
+    }
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === 1 && node !== document.documentElement && parts.length < 8) {
+      parts.unshift(partFor(node));
+      const sel = parts.join(' > ');
+      if (document.querySelectorAll(sel).length === 1) return sel;
+      node = node.parentElement;
+    }
+    const sel = parts.join(' > ');
+    if (document.querySelectorAll(sel).length > 1 && el.parentElement) {
+      const siblings = Array.from(el.parentElement.children).filter((c) => c.tagName === el.tagName);
+      const nth = siblings.indexOf(el) + 1;
+      if (nth > 0) parts[parts.length - 1] += ':nth-of-type(' + nth + ')';
+    }
+    return parts.join(' > ');
+  }
+
+  const picker = { active: false };
+
+  function stopPicker() {
+    if (!picker.active) return;
+    picker.active = false;
+    document.removeEventListener('mousemove', picker.onMove, true);
+    document.removeEventListener('click', picker.onClick, true);
+    document.removeEventListener('keydown', picker.onKey, true);
+    if (picker.box) picker.box.remove();
+    if (picker.tip) picker.tip.remove();
+  }
+
+  function banner(text, ms) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483647;' +
+      'background:#1f6feb;color:#fff;font:13px/1.4 system-ui,sans-serif;padding:8px 14px;border-radius:6px;' +
+      'box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:80vw;text-align:center;pointer-events:none;';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), ms || 4000);
+  }
+
+  function startPicker() {
+    if (picker.active) return;
+    picker.active = true;
+
+    picker.box = document.createElement('div');
+    picker.box.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;' +
+      'border:2px solid #1f6feb;background:rgba(31,111,235,.12);border-radius:3px;';
+    picker.tip = document.createElement('div');
+    picker.tip.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;background:#1f6feb;' +
+      'color:#fff;font:11px/1.4 ui-monospace,Consolas,monospace;padding:3px 6px;border-radius:4px;' +
+      'max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    document.body.appendChild(picker.box);
+    document.body.appendChild(picker.tip);
+
+    picker.onMove = (e) => {
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      if (!target || target === picker.box || target === picker.tip) return;
+      picker.target = target;
+      const r = target.getBoundingClientRect();
+      picker.box.style.left = r.left + 'px';
+      picker.box.style.top = r.top + 'px';
+      picker.box.style.width = r.width + 'px';
+      picker.box.style.height = r.height + 'px';
+      picker.tip.textContent = Math.round(r.width) + '×' + Math.round(r.height) + '  ' + partFor(target);
+      picker.tip.style.left = Math.max(4, r.left) + 'px';
+      picker.tip.style.top = (r.top > 24 ? r.top - 22 : r.bottom + 4) + 'px';
+    };
+
+    picker.onClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = picker.target || document.elementFromPoint(e.clientX, e.clientY);
+      stopPicker();
+      if (!target) return;
+      const selector = uniqueSelector(target);
+      chrome.storage.local.get(['cbwcOptions'], (data) => {
+        const saved = Object.assign({}, data.cbwcOptions || {}, {
+          captureTarget: 'element',
+          elementSelector: selector
+        });
+        chrome.storage.local.set({ cbwcOptions: saved, cbwcPicked: selector });
+      });
+      banner('Capture area set: ' + selector + ' — reopen the extension and press Start.', 6000);
+    };
+
+    picker.onKey = (e) => {
+      if (e.key === 'Escape') {
+        stopPicker();
+        banner('Element picking cancelled.', 2000);
+      }
+    };
+
+    document.addEventListener('mousemove', picker.onMove, true);
+    document.addEventListener('click', picker.onClick, true);
+    document.addEventListener('keydown', picker.onKey, true);
+    banner('Click the part of the question you want screenshotted. Esc to cancel.', 6000);
   }
 
   // ---------- the walk ----------
@@ -354,7 +557,18 @@
         if (v.verdict === 'incorrect' || opts.captureAll) {
           report(label + ': ' + v.verdict + (v.icons ? '' : ' (no score icon found)') + ' - capturing...');
           try {
-            const shot = await captureQuestion(opts, scope);
+            let shot;
+            if (opts.captureTarget === 'element' && opts.elementSelector) {
+              const target = document.querySelector(opts.elementSelector);
+              if (target) {
+                shot = await captureElement(opts, target);
+              } else {
+                report(label + ': "' + opts.elementSelector + '" not on this question - using full page');
+                shot = await captureQuestion(opts, scope);
+              }
+            } else {
+              shot = await captureQuestion(opts, scope);
+            }
             const name = 'q' + String(index).padStart(3, '0') + '-' + v.verdict + '.' + ext;
             const res = await send({
               type: 'SAVE',
@@ -442,6 +656,13 @@
 
     if (msg.type === 'STOP') {
       state.cancel = true;
+      stopPicker();
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (msg.type === 'PICK') {
+      startPicker();
       sendResponse({ ok: true });
       return;
     }
@@ -454,8 +675,20 @@
       const v = verdictFor(scope);
       const nextBtn = findNext(opts);
       const cls = scope.className ? '.' + String(scope.className).split(/\s+/)[0] : '';
+      let area = 'whole page';
+      if (opts.captureTarget === 'element' && opts.elementSelector) {
+        const matches = document.querySelectorAll(opts.elementSelector);
+        if (!matches.length) {
+          area = 'NOT FOUND on this question';
+        } else {
+          const r = matches[0].getBoundingClientRect();
+          area = Math.round(r.width) + '×' + Math.round(r.height) + ' px' +
+            (matches.length > 1 ? ' (' + matches.length + ' matches, using the first)' : '');
+        }
+      }
       sendResponse({
         ok: true,
+        area: area,
         scope: scope.tagName.toLowerCase() + cls,
         question: info.num ? ('Question ' + info.num + (info.total ? ' of ' + info.total : '')) : '(number not found)',
         verdict: v.verdict,
