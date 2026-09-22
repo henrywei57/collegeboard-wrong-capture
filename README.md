@@ -63,32 +63,43 @@ shown on the page (falling back to walk order if the page doesn't show one).
 | Image | PNG (lossless) or JPEG (much smaller files). |
 | Page wait | Pause after moving to a new question, so it can render before the screenshot. Raise it on a slow connection. |
 | Max questions | Safety stop. |
-| Screenshot area | `Whole page`, or `Just one element` to crop every screenshot to one part of the question. See below. |
+| Screenshot area | `Whole page`, or `Selected element(s)` to crop every screenshot to the parts of the question you pick. See below. |
 | Full-page screenshot | Scrolls the question and stitches the slices into one tall image, so long passages aren't cut off. Uncheck for a single viewport shot. (Hidden when capturing a single element, which handles its own scrolling.) |
 | Capture every question | Saves correct answers too, suffixed `-correct`. |
 | Advanced selectors | Override the question container and Next button if College Board's markup differs from what the built-in list expects. |
 
-## Capturing one element instead of the page
+## Capturing chosen elements instead of the page
 
-If you only want the question itself — no site header, no navigator, no
-whitespace — set **Screenshot area** to *Just one element*, then:
+If you only want parts of the question — say the stem and the answer choices,
+but not the site header or the navigator — set **Screenshot area** to
+*Selected element(s)*, then:
 
 1. Click **Pick…**. The popup closes and the page enters picking mode.
 2. Move the mouse: the element under the cursor is outlined, with its size and
    a preview of its selector.
-3. Click the part you want. Press **Esc** to cancel.
-4. Reopen the extension — the selector is filled in. **Test page** reports the
-   pixel size it would capture.
+3. **Click each area you want.** Chosen areas stay outlined in green and a
+   counter appears at the top of the page. Click a chosen area again to remove
+   it. Up to 12.
+4. Press **Esc** (or Enter) when done. **Esc with nothing selected cancels.**
+5. Reopen the extension — the selectors are filled in, comma separated.
+   **Test page** reports how many areas match and how big the result will be.
 
-The same selector is reused for every question, so pick something structural
-(the question panel) rather than a one-off. The generated selector prefers
-`data-test` attributes and stable class names, and skips framework-generated
-ones like `css-1a2b3c` that change between page loads. You can always edit it by
-hand, or type one in directly without using the picker.
+Everything selected is combined into **one image per question**, stacked
+vertically in page order — not click order, and not separate files.
+
+The same selectors are reused for every question, so pick something structural
+(the stem, the choice list) rather than a one-off. Generated selectors prefer
+`data-test` attributes and stable class names, and skip framework-generated ones
+like `css-1a2b3c` that change between page loads. You can edit the field by hand
+or type selectors directly without using the picker — it is an ordinary CSS
+selector list, so `.stem, .choices` is exactly what it looks like.
+
+Because it is a selector list, one entry can legitimately match several elements
+per question (every answer choice, for instance) and all of them are captured.
 
 An element taller than the window is captured in bands and stacked, so nothing
-is cut off. If the selector doesn't match on some question, that one falls back
-to a full-page screenshot and the log says so.
+is cut off. If nothing matches on some question, that one falls back to a
+full-page screenshot and the log says so.
 
 ## Things worth knowing
 
