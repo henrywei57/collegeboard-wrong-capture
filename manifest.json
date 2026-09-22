@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "College Board Wrong Answer Capture",
+  "version": "1.0.0",
+  "description": "Walks through a College Board MCQ review, screenshots every question marked incorrect, and downloads them all into one folder.",
+  "permissions": ["activeTab", "scripting", "downloads", "storage", "tabs"],
+  "host_permissions": [
+    "https://*.collegeboard.org/*"
+  ],
+  "optional_host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Capture wrong answers",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.collegeboard.org/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
