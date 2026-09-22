@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Wrong Answer Capture</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      width: 340px;
+      margin: 0;
+      padding: 14px;
+      font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    label { display: block; margin: 8px 0 3px; font-size: 12px; opacity: .8; }
+    input[type="text"], input[type="number"], select {
+      width: 100%; box-sizing: border-box; padding: 5px 6px;
+      border: 1px solid rgba(128,128,128,.5); border-radius: 5px;
+      background: transparent; color: inherit; font: inherit;
+    }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .check { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; }
+    .check input { margin: 0; }
+    .buttons { display: flex; gap: 8px; margin: 12px 0 8px; }
+    button {
+      flex: 1; padding: 7px 10px; border-radius: 6px; font: inherit; cursor: pointer;
+      border: 1px solid rgba(128,128,128,.5); background: transparent; color: inherit;
+    }
+    button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: default; }
+    details { margin-top: 6px; }
+    summary { cursor: pointer; font-size: 12px; opacity: .8; }
+    #log {
+      margin-top: 10px; height: 130px; overflow-y: auto;
+      border: 1px solid rgba(128,128,128,.35); border-radius: 6px;
+      padding: 6px 8px; font: 11px/1.5 ui-monospace, Consolas, monospace;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .hint { font-size: 11px; opacity: .65; margin-top: 8px; }
+    .perm { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 11px; opacity: .8; }
+    .perm button { flex: 0 0 auto; padding: 3px 8px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>College Board — capture wrong answers</h1>
+
+  <label for="folder">Download folder (inside Downloads)</label>
+  <input id="folder" type="text" value="collegeboard-wrong">
+
+  <div class="row">
+    <div>
+      <label for="mode">Navigation</label>
+      <select id="mode">
+        <option value="auto">Auto-detect</option>
+        <option value="next">Click "Next"</option>
+        <option value="nav">Click question list</option>
+      </select>
+    </div>
+    <div>
+      <label for="format">Image</label>
+      <select id="format">
+        <option value="png">PNG</option>
+        <option value="jpeg">JPEG (smaller)</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="settleMs">Page wait (ms)</label>
+      <input id="settleMs" type="number" min="200" max="10000" step="100" value="900">
+    </div>
+    <div>
+      <label for="maxQuestions">Max questions</label>
+      <input id="maxQuestions" type="number" min="1" max="500" value="250">
+    </div>
+  </div>
+
+  <div class="check"><input id="fullPage" type="checkbox" checked><label for="fullPage" style="margin:0">Full-page screenshot (scroll &amp; stitch)</label></div>
+  <div class="check"><input id="captureAll" type="checkbox"><label for="captureAll" style="margin:0">Capture every question, not just wrong ones</label></div>
+
+  <details>
+    <summary>Advanced selectors</summary>
+    <label for="scopeSelector">Question container selector (optional)</label>
+    <input id="scopeSelector" type="text" placeholder="e.g. .question-container">
+    <label for="nextSelector">Next-button selector (optional)</label>
+    <input id="nextSelector" type="text" placeholder="e.g. button[aria-label='Next']">
+  </details>
+
+  <div class="buttons">
+    <button id="start" class="primary">Start</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="test">Test page</button>
+  </div>
+
+  <div id="log">Open the review page for your MCQ test, go to the first question, then press Start.</div>
+  <div class="hint">Keep this tab active and in front — Chrome can only screenshot the visible tab.</div>
+  <div class="perm">
+    <span id="permState">Screenshot access: per-click</span>
+    <button id="grantAll">Grant always</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
