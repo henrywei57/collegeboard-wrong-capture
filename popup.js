@@ -164,7 +164,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   syncTargetUI();
   if (cbwcPicked) {
     await chrome.storage.local.remove('cbwcPicked');
-    setLog('Capture area set to:\n  ' + cbwcPicked + '\n\nPress Test page to check it, or Start to run.');
+    const count = cbwcPicked.split(/\s*,\s*/).filter(Boolean).length;
+    setLog('Capture area' + (count === 1 ? '' : 's (' + count + ')') + ' set to:\n  ' +
+      cbwcPicked.split(/\s*,\s*/).join('\n  ') +
+      '\n\nThey stack into one image per question, in page order.' +
+      '\nPress Test page to check, or Start to run.');
   }
   const tab = await activeTab();
   let running = false;

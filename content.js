@@ -367,6 +367,31 @@
     return { segments: segments, dpr: dpr };
   }
 
+  // Several elements stack into one image per question, in document order.
+  const MAX_TARGETS = 12;
+
+  async function captureElements(opts, elements) {
+    const segments = [];
+    let dpr = window.devicePixelRatio || 1;
+    for (const el of elements) {
+      const shot = await captureElement(opts, el);
+      for (const seg of shot.segments) segments.push(seg);
+      dpr = shot.dpr;
+      if (elements.length > 1) await sleep(opts.captureGapMs);
+    }
+    return { segments: segments, dpr: dpr };
+  }
+
+  function resolveTargets(selector) {
+    let found;
+    try {
+      found = Array.from(document.querySelectorAll(selector));
+    } catch (e) {
+      return { error: e.message, targets: [] };
+    }
+    return { error: null, targets: found.filter(visible).slice(0, MAX_TARGETS) };
+  }
+
   function sanitize(s) {
     return String(s).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 60);
   }
@@ -420,7 +445,7 @@
     return parts.join(' > ');
   }
 
-  const picker = { active: false };
+  const picker = { active: false, chosen: [], marks: [] };
 
   function stopPicker() {
     if (!picker.active) return;
@@ -430,6 +455,16 @@
     document.removeEventListener('keydown', picker.onKey, true);
     if (picker.box) picker.box.remove();
     if (picker.tip) picker.tip.remove();
+    if (picker.status) picker.status.remove();
+    // Clear the references too: updateStatus only appends when there is none,
+    // so a stale detached node would leave later picks with no instructions.
+    picker.box = null;
+    picker.tip = null;
+    picker.status = null;
+    picker.target = null;
+    picker.marks.forEach((m) => m.node.remove());
+    picker.marks = [];
+    picker.chosen = [];
   }
 
   function banner(text, ms) {
@@ -468,36 +503,94 @@
       picker.tip.textContent = Math.round(r.width) + '×' + Math.round(r.height) + '  ' + partFor(target);
       picker.tip.style.left = Math.max(4, r.left) + 'px';
       picker.tip.style.top = (r.top > 24 ? r.top - 22 : r.bottom + 4) + 'px';
+      positionMarks();
     };
 
     picker.onClick = (e) => {
       e.preventDefault();
       e.stopPropagation();
       const target = picker.target || document.elementFromPoint(e.clientX, e.clientY);
-      stopPicker();
       if (!target) return;
       const selector = uniqueSelector(target);
-      chrome.storage.local.get(['cbwcOptions'], (data) => {
-        const saved = Object.assign({}, data.cbwcOptions || {}, {
-          captureTarget: 'element',
-          elementSelector: selector
-        });
-        chrome.storage.local.set({ cbwcOptions: saved, cbwcPicked: selector });
-      });
-      banner('Capture area set: ' + selector + ' — reopen the extension and press Start.', 6000);
+      const at = picker.chosen.indexOf(selector);
+      if (at !== -1) {
+        // Clicking a chosen area again removes it.
+        picker.chosen.splice(at, 1);
+        const mark = picker.marks.splice(at, 1)[0];
+        if (mark) mark.node.remove();
+      } else {
+        if (picker.chosen.length >= MAX_TARGETS) {
+          updateStatus('Limit of ' + MAX_TARGETS + ' areas reached.');
+          return;
+        }
+        picker.chosen.push(selector);
+        const node = document.createElement('div');
+        node.style.cssText = 'position:fixed;z-index:2147483645;pointer-events:none;' +
+          'border:2px dashed #2da44e;background:rgba(45,164,78,.14);border-radius:3px;';
+        document.body.appendChild(node);
+        picker.marks.push({ el: target, node: node });
+      }
+      positionMarks();
+      updateStatus();
     };
 
     picker.onKey = (e) => {
-      if (e.key === 'Escape') {
-        stopPicker();
-        banner('Element picking cancelled.', 2000);
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        finishPicker(picker.chosen.length > 0);
       }
     };
 
     document.addEventListener('mousemove', picker.onMove, true);
     document.addEventListener('click', picker.onClick, true);
     document.addEventListener('keydown', picker.onKey, true);
-    banner('Click the part of the question you want screenshotted. Esc to cancel.', 6000);
+    updateStatus();
+  }
+
+  function positionMarks() {
+    picker.marks.forEach((m) => {
+      const r = m.el.getBoundingClientRect();
+      m.node.style.left = r.left + 'px';
+      m.node.style.top = r.top + 'px';
+      m.node.style.width = r.width + 'px';
+      m.node.style.height = r.height + 'px';
+    });
+  }
+
+  function updateStatus(extra) {
+    if (!picker.active) return;
+    if (!picker.status) {
+      picker.status = document.createElement('div');
+      picker.status.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);' +
+        'z-index:2147483647;background:#1f6feb;color:#fff;font:13px/1.4 system-ui,sans-serif;' +
+        'padding:8px 14px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:80vw;' +
+        'text-align:center;pointer-events:none;';
+      document.body.appendChild(picker.status);
+    }
+    const n = picker.chosen.length;
+    picker.status.textContent = (extra ? extra + '  ' : '') +
+      (n === 0
+        ? 'Click each part of the question you want screenshotted. Esc to cancel.'
+        : n + ' area' + (n === 1 ? '' : 's') + ' selected — click more, click one again to remove, Esc when done.');
+  }
+
+  function finishPicker(save) {
+    const chosen = picker.chosen.slice();
+    stopPicker();
+    if (!save || !chosen.length) {
+      banner('Element picking cancelled.', 2500);
+      return;
+    }
+    const selector = chosen.join(', ');
+    chrome.storage.local.get(['cbwcOptions'], (data) => {
+      const saved = Object.assign({}, data.cbwcOptions || {}, {
+        captureTarget: 'element',
+        elementSelector: selector
+      });
+      chrome.storage.local.set({ cbwcOptions: saved, cbwcPicked: selector });
+    });
+    banner(chosen.length + ' capture area' + (chosen.length === 1 ? '' : 's') +
+      ' set — reopen the extension and press Start.', 6000);
   }
 
   // ---------- the walk ----------
@@ -559,9 +652,13 @@
           try {
             let shot;
             if (opts.captureTarget === 'element' && opts.elementSelector) {
-              const target = document.querySelector(opts.elementSelector);
-              if (target) {
-                shot = await captureElement(opts, target);
+              const found = resolveTargets(opts.elementSelector);
+              if (found.error) {
+                report(label + ': selector rejected (' + found.error + ') - using full page');
+                shot = await captureQuestion(opts, scope);
+              } else if (found.targets.length) {
+                if (found.targets.length > 1) report(label + ': ' + found.targets.length + ' areas');
+                shot = await captureElements(opts, found.targets);
               } else {
                 report(label + ': "' + opts.elementSelector + '" not on this question - using full page');
                 shot = await captureQuestion(opts, scope);
@@ -677,13 +774,18 @@
       const cls = scope.className ? '.' + String(scope.className).split(/\s+/)[0] : '';
       let area = 'whole page';
       if (opts.captureTarget === 'element' && opts.elementSelector) {
-        const matches = document.querySelectorAll(opts.elementSelector);
-        if (!matches.length) {
+        const found = resolveTargets(opts.elementSelector);
+        if (found.error) {
+          area = 'INVALID selector (' + found.error + ')';
+        } else if (!found.targets.length) {
           area = 'NOT FOUND on this question';
         } else {
-          const r = matches[0].getBoundingClientRect();
-          area = Math.round(r.width) + '×' + Math.round(r.height) + ' px' +
-            (matches.length > 1 ? ' (' + matches.length + ' matches, using the first)' : '');
+          const sizes = found.targets.map((t) => t.getBoundingClientRect());
+          const w = Math.round(Math.max.apply(null, sizes.map((r) => r.width)));
+          const h = Math.round(sizes.reduce((sum, r) => sum + r.height, 0));
+          area = found.targets.length === 1
+            ? w + '×' + h + ' px'
+            : found.targets.length + ' areas stacked, about ' + w + '×' + h + ' px';
         }
       }
       sendResponse({
